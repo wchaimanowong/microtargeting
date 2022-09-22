@@ -41,13 +41,13 @@ interpolate_vec <- function(c,vec) {
   return(interpolate_val)
 }
 
-p <- 0.5
-kappa <- 0.5
+p <- 0.7
+kappa <- 0.6
 n1 <- 5
 n2 <- 5
 
 N <- 20 # Number steps in [0,1] interval
-alpha <- 1 # Convergence speed.
+alpha <- 3.5 # Convergence speed.
 
 dc <- 1/N
 
@@ -71,12 +71,6 @@ Inverse_Fn <- function(f, vec) {
 }
 
 u <- function(beta, beta_, k) {
-  # We know analytically that beta = (1-kappa)*c if beta < 1-kappa, so we will impose this on beta_.
-  for (j in 1:length(beta_)) {
-    if (beta_[j] <= 1-kappa) {
-      beta_[j] <- beta_low[j]
-    }
-  }
   
   Int1 <- 0
   j <- 1
@@ -121,56 +115,72 @@ u <- function(beta, beta_, k) {
   return(Int1 + Int2 + Int3 + Int4)
 }
 
-beta <- kappa + (1-kappa)*(0:N)/N # Guess initial beta.
+beta <- kappa + (1-kappa)*(0:N)/N # Initial guess for beta > kappa.
 max_iter <- 1000
+
 ii <- 0
 while (ii < max_iter) {
   beta_ <- beta
   for (i in 1:length(beta)) {
     dbeta <- rep(0,length(beta))
-    dbeta[i] <- 1.5*dc # The factor 1.5 is a numerical trick. Sometimes it is problematic to test the same step size as the (integer multiple of) step size used in numerical integration.
+    dbeta[i] <- alpha*dc
     u_ <- u(beta, beta, i)
     up <- u(beta + dbeta, beta, i)
     um <- u(beta - dbeta, beta, i)
     
     if ((u_ < up) || (u_ < um)) {
       if (up >= um) {
-        #beta[i] <- min(beta[i] + dc,1) 
-        beta[i] <- min(beta[i] + alpha*(up-u_),1)
+        beta[i] <- min(beta[i] + (up-u_),1)
       }
       if (um > up) {
-        #beta[i] <- min(beta[i] - dc,0) #max(beta[i] - alpha*(um-u_),0)
-        beta[i] <- max(beta[i] - alpha*(um-u_),0)
+        beta[i] <- max(beta[i] - (um-u_), kappa)
       }
     }
   }
   
-  # In the iteration, beta may stuck on either beta < 1-kappa equilibrium or beta > kappa equilibrium. Makes sure we reach the 'global maximum' by comparing which one is better.
-  # We only check this after beta converges to some extend, so wait until ii > something...
+  # The final bidding function (also will be denoted by beta) is beta_low[i] at cval(i) if u(beta_low, beta_low, i) > u(beta, beta, i) and beta[i] otherwise.
   if (ii > max_iter/2) {
-    transition_idx <- 0
     for (i in 1:length(beta)) {
-      u1 <- u(beta, beta, i)
-      u2 <- u(beta_low, beta_low, i)
-      if ((u1 < u2) || (beta[i] <= 1-kappa)) {
-        transition_idx <- i
+      u1 <- u(beta_low, beta_low, i)
+      u2 <- u(beta, beta, i)
+      if (u1 > u2) {
+        beta[i] <- beta_low[i]
       }
     }
-    print(paste("beta < 1-kappa for i <", transition_idx))
-    if ((transition_idx > 0) && (transition_idx < length(beta))) {
-      beta <- c(beta_low[1:transition_idx], beta[(transition_idx+1):length(beta)])
-    }
-    if (transition_idx == length(beta)) {
-      beta <- beta_low
-    }
   }
-  
+
   Dbeta <- sum((beta-beta_)^2)
   ii <- ii + 1
   print(paste("iter = ", ii, "Dbeta = ", Dbeta))
 }
 
+# for (i in 1:length(beta)) {
+#   u1 <- u(beta_low, beta_low, i)
+#   u2 <- u(beta, beta, i)
+#   if (u1 > u2) {
+#     beta[i] <- beta_low[i]
+#   }
+# }
+
 plot((0:N)/N, beta, type='o', xlab="c", ylab="beta", main="Bidding function")
+
+deviation_test <- function(beta) {
+  pass <- TRUE
+  dup <- rep(0, length(beta))
+  dum <- rep(0, length(beta))
+  for (i in 1:length(beta)) {
+    dbeta <- rep(0, length(beta))
+    dbeta[i] <- alpha*dc
+    u_ <- u(beta, beta, i)
+    dup[i] <- u(beta + dbeta, beta, i) - u_
+    dum[i] <- u(beta - dbeta, beta, i) - u_
+    
+    pass <- pass && ((dup[i] <= 0) && (dum[i] <= 0))
+  }
+  return(list(pass, dup, dum))
+}
+
+deviation_test(beta)
 
 ################################################################################
 # Compute common--value publisher revenues
@@ -218,7 +228,7 @@ v_mtia = 0
 for (i in 1:N) {
   v_mtia <- v_mtia + dc*p*n1*(kappa + (1-kappa)*cval(i))*(G(cval(i))^(n1-1))*(G(Inverse_Fn(kappa + (1-kappa)*cval(i), beta))^n2)*dG(cval(i))
   v_mtia <- v_mtia + dc*p*n2*(kappa + (1-kappa)*cval(i))*(G(max((beta[i]-kappa)/(1-kappa),0))^n1)*(G(cval(i))^(n2-1))*dG(cval(i))
-
+  
   v_mtia <- v_mtia + dc*(1-p)*n1*(1-kappa)*cval(i)*(G(cval(i))^(n1-1))*(G(Inverse_Fn((1-kappa)*cval(i), beta))^n2)*dG(cval(i))
   v_mtia <- v_mtia + dc*(1-p)*n2*(1-kappa)*cval(i)*(G(min(beta[i]/(1-kappa),1))^n1)*(G(cval(i))^(n2-1))*dG(cval(i))
 }
@@ -283,58 +293,3 @@ print("Compute independent--value conversion rates:")
 print(paste("v_pin =", v_pin, "v_mtia =", v_mtia, "v_ct =", v_ct))
 
 ################################################################################
-
-# 
-# # Guess initial beta. We have two guesses, one for beta < 1-kappa, another for beta > kappa. We suspect these will lead to two different equilibrium.
-# # In the end, for a given c, the actual symmetric equilibrium shall be taken to be the one that maximizes u(beta, beta, c).
-# ini_beta <- list((1-kappa)*(0:N)/N, kappa + (1-kappa)*(0:N)/N)
-# sol_beta <- ini_beta
-# max_iter <- 1000
-# 
-# for (jj in 1:2) {
-#   beta <- ini_beta[[jj]]
-#   ii <- 0
-#   while (ii < max_iter) {
-#     beta_ <- beta
-#     for (i in 1:length(beta)) {
-#       dbeta <- rep(0,length(beta))
-#       dbeta[i] <- dc
-#       u_ <- u(beta, beta, i)
-#       up <- u(beta + dbeta, beta, i)
-#       um <- u(beta - dbeta, beta, i)
-#       
-#       if ((u_ < up) || (u_ < um)) {
-#         if (up >= um) {
-#           #beta[i] <- min(beta[i] + dc,1) 
-#           beta[i] <- min(beta[i] + alpha*(up-u_),1)
-#         }
-#         if (um > up) {
-#           #beta[i] <- min(beta[i] - dc,0) #max(beta[i] - alpha*(um-u_),0)
-#           beta[i] <- max(beta[i] - alpha*(um-u_),0)
-#         }
-#       }
-#     }
-#     Dbeta <- sum((beta-beta_)^2)
-#     ii <- ii + 1
-#     print(paste("iter = ", ii, "Dbeta = ", Dbeta))
-#   }
-#   sol_beta[[jj]] <- beta
-# }
-# 
-# beta <- sol_beta[[2]]
-# lower <- FALSE
-# for (i in 2:length(beta)) {
-#   if (!lower) {
-#     u1 <- u(sol_beta[[1]], sol_beta[[1]], length(beta)-i+1)
-#     u2 <- u(sol_beta[[2]], sol_beta[[2]], length(beta)-i+1)
-#     if (u1 > u2) {
-#       print(i)
-#       lower <- TRUE
-#     }
-#   } else {
-#     beta[length(beta)-i+1] <- sol_beta[[1]][length(beta)-i+1]
-#   }
-# }
-# 
-# plot(beta, type='o')
-
