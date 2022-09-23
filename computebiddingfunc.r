@@ -180,6 +180,19 @@ deviation_test <- function(beta) {
   return(list(pass, dup, dum))
 }
 
+global_deviation_test <- function(beta) {
+  pass <- TRUE
+  for (i in 1:length(beta)) {
+    dbeta <- rep(0, length(beta))
+    dbeta[i] <- 1
+    u_ <- u(beta, beta, i)
+    for (j in 1:length(beta)) {
+      pass <- pass && (u_ >= u((j-1)*dc*dbeta, beta, i))
+    }
+  }
+  return(pass)
+}
+
 deviation_test(beta)
 
 ################################################################################
